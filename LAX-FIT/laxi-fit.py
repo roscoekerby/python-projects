@@ -33,13 +33,11 @@ def calculate_match_properties(matches, train_kp, query_kp, image_width):
         # Calculate length using adjusted coordinates
         length = np.sqrt(np.sum((query_pt - train_pt_adjusted) ** 2))
 
-        # Calculate angle using adjusted coordinates
+        # Calculate angle relative to horizontal
         dx = train_pt_adjusted[0] - query_pt[0]
         dy = train_pt_adjusted[1] - query_pt[1]
-        angle = np.degrees(np.arctan2(dy, dx))
-
-        # Ensure angle is in range [0, 360)
-        angle = angle % 360
+        # Calculate angle in degrees, negative for downward slope, positive for upward slope
+        angle = np.degrees(np.arctan2(-dy, dx))  # Negative dy to make upward slopes positive
 
         properties.append({
             'length': float(length),
@@ -71,14 +69,6 @@ def calculate_statistics_with_tolerance(match_properties, max_image_dimension, t
     lengths = [prop['length'] for prop in match_properties]
     angles = [prop['angle'] for prop in match_properties]
 
-    # Basic validation
-    if not lengths or not angles:
-        print("Warning: No valid lengths or angles found in match properties")
-        return {
-            'length': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0},
-            'angle': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0}
-        }
-
     # Calculate statistics for lengths
     length_stats = {
         'mean': float(np.mean(lengths)),
@@ -98,11 +88,6 @@ def calculate_statistics_with_tolerance(match_properties, max_image_dimension, t
         'max': float(np.max(angles)),
         'count': len(angles)
     }
-
-    # Debug print
-    print(f"\nDebug - Statistics Summary:")
-    print(f"Lengths: min={length_stats['min']:.2f}, max={length_stats['max']:.2f}, mean={length_stats['mean']:.2f}")
-    print(f"Angles: min={angle_stats['min']:.2f}, max={angle_stats['max']:.2f}, mean={angle_stats['mean']:.2f}")
 
     return {
         'length': length_stats,
@@ -181,10 +166,10 @@ def calculate_LAX_FIT(length_std, length_mean, angle_std, crossing_fraction, num
     F_inlier = min(inlier_ratio * 3, 1)  # Scales up small ratios, caps at 1.0
 
     # Define weights (including new inlier ratio weight)
-    w_length = 0.25
-    w_angle = 0.25
-    w_crossing = 0.25
-    w_inlier = 0.25
+    w_length = 0.33
+    w_angle = 0.33
+    w_crossing = 0.33
+    w_inlier = 0.01
 
     # Calculate contributions
     contribution_length = w_length * F_length
