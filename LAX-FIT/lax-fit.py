@@ -18,57 +18,91 @@ def estimate_goodness_of_fit(matches, train_kp, query_kp):
 
     return inlier_frac, inliers, mask
 
-def calculate_match_properties(matches, train_kp, query_kp):
+
+def calculate_match_properties(matches, train_kp, query_kp, image_width):
     properties = []
+
     for match in matches:
         # Get the keypoints
         query_pt = np.array(query_kp[match.queryIdx].pt)
         train_pt = np.array(train_kp[match.trainIdx].pt)
 
-        # Calculate length (distance between points)
-        length = np.linalg.norm(query_pt - train_pt)
+        # Adjust train point x-coordinate by adding image width
+        train_pt_adjusted = np.array([train_pt[0] + image_width, train_pt[1]])
 
-        # Calculate angle between points (in degrees)
-        angle = np.arctan2(train_pt[1] - query_pt[1], train_pt[0] - query_pt[0]) * 180.0 / np.pi
+        # Calculate length using adjusted coordinates
+        length = np.sqrt(np.sum((query_pt - train_pt_adjusted) ** 2))
 
-        # Append properties (length, angle)
+        # Calculate angle using adjusted coordinates
+        dx = train_pt_adjusted[0] - query_pt[0]
+        dy = train_pt_adjusted[1] - query_pt[1]
+        angle = np.degrees(np.arctan2(dy, dx))
+
+        # Ensure angle is in range [0, 360)
+        angle = angle % 360
+
         properties.append({
-            'length': length,
-            'angle': angle,
+            'length': float(length),
+            'angle': float(angle),
             'query_point': query_pt,
-            'train_point': train_pt
+            'train_point': train_pt_adjusted
         })
+
+    # Debug print
+    if properties:
+        print(f"\nDebug - Match Measurements (with image width offset = {image_width}):")
+        for i, prop in enumerate(properties[:5]):
+            print(f"Match {i}:")
+            print(f"  Query point: ({prop['query_point'][0]:.1f}, {prop['query_point'][1]:.1f})")
+            print(f"  Train point: ({prop['train_point'][0]:.1f}, {prop['train_point'][1]:.1f})")
+            print(f"  Length: {prop['length']:.1f}")
+            print(f"  Angle: {prop['angle']:.1f}°")
 
     return properties
 
 def calculate_statistics_with_tolerance(match_properties, max_image_dimension, tolerance=0.01):
+    if not match_properties:
+        return {
+            'length': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0},
+            'angle': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0}
+        }
+
     # Extract lengths and angles
     lengths = [prop['length'] for prop in match_properties]
     angles = [prop['angle'] for prop in match_properties]
 
-    # Filter out values close to the mean
-    lengths = [l for l in lengths if abs(l - np.mean(lengths)) > tolerance]
-    angles = [a for a in angles if abs(a - np.mean(angles)) > tolerance]
+    # Basic validation
+    if not lengths or not angles:
+        print("Warning: No valid lengths or angles found in match properties")
+        return {
+            'length': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0},
+            'angle': {'mean': 0, 'median': 0, 'std': 0, 'min': 0, 'max': 0, 'count': 0}
+        }
 
-    # Calculate length statistics
+    # Calculate statistics for lengths
     length_stats = {
-        'mean': np.mean(lengths) if lengths else 0,
-        'median': np.median(lengths) if lengths else 0,
-        'std': np.std(lengths) if lengths else 0,
-        'min': np.min(lengths) if lengths else 0,
-        'max': np.max(lengths) if lengths else 0,
+        'mean': float(np.mean(lengths)),
+        'median': float(np.median(lengths)),
+        'std': float(np.std(lengths)) if len(lengths) > 1 else 0,
+        'min': float(np.min(lengths)),
+        'max': float(np.max(lengths)),
         'count': len(lengths)
     }
 
-    # Calculate angle statistics
+    # Calculate statistics for angles
     angle_stats = {
-        'mean': np.mean(angles) if angles else 0,
-        'median': np.median(angles) if angles else 0,
-        'std': np.std(angles) if angles else 0,
-        'min': np.min(angles) if angles else 0,
-        'max': np.max(angles) if angles else 0,
+        'mean': float(np.mean(angles)),
+        'median': float(np.median(angles)),
+        'std': float(np.std(angles)) if len(angles) > 1 else 0,
+        'min': float(np.min(angles)),
+        'max': float(np.max(angles)),
         'count': len(angles)
     }
+
+    # Debug print
+    print(f"\nDebug - Statistics Summary:")
+    print(f"Lengths: min={length_stats['min']:.2f}, max={length_stats['max']:.2f}, mean={length_stats['mean']:.2f}")
+    print(f"Angles: min={angle_stats['min']:.2f}, max={angle_stats['max']:.2f}, mean={angle_stats['mean']:.2f}")
 
     return {
         'length': length_stats,
@@ -146,6 +180,7 @@ def calculate_LAX_FIT(length_std, length_mean, angle_std, crossing_fraction):
 
     return LAX_FIT_score
 
+
 def identify_with_LAX_FIT(query_image, train_image, visualize=False):
     sift = cv2.SIFT_create()
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
@@ -164,16 +199,18 @@ def identify_with_LAX_FIT(query_image, train_image, visualize=False):
     matches = sorted(matches, key=lambda x: x.distance)
 
     score, inliers, mask = estimate_goodness_of_fit(matches, train_keypoints, query_keypoints)
-    inlier_properties = calculate_match_properties(inliers, train_keypoints, query_keypoints)
+
+    # Pass image width to calculate_match_properties
+    image_width = query_image.shape[1]
+    inlier_properties = calculate_match_properties(inliers, train_keypoints, query_keypoints, image_width)
 
     max_image_dimension = max(query_image.shape[:2])
     stats = calculate_statistics_with_tolerance(inlier_properties, max_image_dimension)
 
-    image_width = query_image.shape[1]
     crossing_fraction, num_crossings = count_crossing_lines(inliers, train_keypoints, query_keypoints, image_width)
 
     LAX_FIT_score = calculate_LAX_FIT(stats['length']['std'], stats['length']['mean'],
-                                     stats['angle']['std'], crossing_fraction)
+                                      stats['angle']['std'], crossing_fraction)
 
     if visualize:
         img_matches = cv2.drawMatches(query_image, query_keypoints, train_image, train_keypoints,
@@ -197,21 +234,21 @@ def identify_with_LAX_FIT(query_image, train_image, visualize=False):
         plt.show()
 
     # Print results in organized groups
-    print("\n=== Length Statistics ===")
+    print("\n=== Matches Length Statistics ===")
     print(f"Mean length: {stats['length']['mean']:.2f}")
     print(f"Median length: {stats['length']['median']:.2f}")
     print(f"Length std dev: {stats['length']['std']:.2f}")
     print(f"Length range: {stats['length']['min']:.2f} - {stats['length']['max']:.2f}")
     print(f"Number of length measurements: {stats['length']['count']}")
 
-    print("\n=== Angle Statistics ===")
+    print("\n=== Matches Angle Statistics ===")
     print(f"Mean angle: {stats['angle']['mean']:.2f}°")
     print(f"Median angle: {stats['angle']['median']:.2f}°")
     print(f"Angle std dev: {stats['angle']['std']:.2f}°")
     print(f"Angle range: {stats['angle']['min']:.2f}° - {stats['angle']['max']:.2f}°")
     print(f"Number of angle measurements: {stats['angle']['count']}")
 
-    print("\n=== Match Statistics ===")
+    print("\n=== Matches Statistics ===")
     print(f"Total matches: {len(matches)}")
     print(f"Inliers: {len(inliers)}")
     print(f"Outliers: {len(matches) - len(inliers)}")
@@ -224,8 +261,9 @@ def identify_with_LAX_FIT(query_image, train_image, visualize=False):
 
     return LAX_FIT_score
 # Example usage:
-image1_path = 'image1.jpg'
-image2_path = 'image2.jpg'
+image1_path = 'img1.jpg'
+image2_path = 'img2.jpg'
+
 
 # Load images
 img1 = cv2.imread(image1_path)
