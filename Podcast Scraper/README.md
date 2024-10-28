@@ -1,5 +1,3 @@
-Here's a comprehensive `README.md` file for your project. I've included sections for features, usage, prerequisites, and future work. 
-
 ```markdown
 # Podcast Episode Scraper
 
